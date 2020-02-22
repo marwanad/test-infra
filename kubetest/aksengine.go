@@ -35,7 +35,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pelletier/go-toml"
 	"k8s.io/test-infra/kubetest/e2e"
 	"k8s.io/test-infra/kubetest/process"
 	"k8s.io/test-infra/kubetest/util"
@@ -137,7 +136,7 @@ type Config struct {
 	Creds Creds
 }
 
-type Cluster struct {
+type aksEngineDeployer struct {
 	ctx                              context.Context
 	credentials                      *Creds
 	location                         string
@@ -178,12 +177,12 @@ type Cluster struct {
 }
 
 // IsAzureStackCloud return true if the cloud is AzureStack
-func (c *Cluster) isAzureStackCloud() bool {
+func (c *aksEngineDeployer) isAzureStackCloud() bool {
 	return c.azureCustomCloudURL != "" && strings.EqualFold(c.azureEnvironment, AzureStackCloud)
 }
 
 // SetCustomCloudProfileEnvironment retrieves the endpoints from Azure Stack metadata endpoint and sets the values for azure.Environment
-func (c *Cluster) SetCustomCloudProfileEnvironment() error {
+func (c *aksEngineDeployer) SetCustomCloudProfileEnvironment() error {
 	var environmentJSON string
 	if c.isAzureStackCloud() {
 		env := azure.Environment{}
@@ -250,21 +249,6 @@ func (c *Cluster) SetCustomCloudProfileEnvironment() error {
 		}
 
 		os.Setenv("AZURE_ENVIRONMENT_FILEPATH", tmpFileName)
-	}
-	return nil
-}
-
-func (c *Cluster) getAzCredentials() error {
-	content, err := ioutil.ReadFile(*aksCredentialsFile)
-	log.Printf("Reading credentials file %v", *aksCredentialsFile)
-	if err != nil {
-		return fmt.Errorf("error reading credentials file %v %v", *aksCredentialsFile, err)
-	}
-	config := Config{}
-	err = toml.Unmarshal(content, &config)
-	c.credentials = &config.Creds
-	if err != nil {
-		return fmt.Errorf("error parsing credentials file %v %v", *aksCredentialsFile, err)
 	}
 	return nil
 }
@@ -339,7 +323,7 @@ func checkParams() error {
 	return nil
 }
 
-func newAKSEngine() (*Cluster, error) {
+func newAKSEngine() (*aksEngineDeployer, error) {
 	if err := checkParams(); err != nil {
 		return nil, fmt.Errorf("error creating Azure K8S cluster: %v", err)
 	}
@@ -354,7 +338,7 @@ func newAKSEngine() (*Cluster, error) {
 		}
 	}
 
-	c := Cluster{
+	c := aksEngineDeployer{
 		ctx:                              context.Background(),
 		apiModelPath:                     *aksTemplateURL,
 		name:                             *aksResourceName,
@@ -387,7 +371,11 @@ func newAKSEngine() (*Cluster, error) {
 		useManagedIdentity:               false,
 		identityName:                     "",
 	}
-	c.getAzCredentials()
+	creds, err := getAzCredentials()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get azure credentials: %v", err)
+	}
+	c.credentials = creds
 	c.azureBlobContainerURL = fmt.Sprintf(azureBlobContainerURLTemplate, c.credentials.StorageAccountName, os.Getenv("AZ_STORAGE_CONTAINER_NAME"))
 	c.customKubeBinaryURL = fmt.Sprintf("%s/%s", c.azureBlobContainerURL, fmt.Sprintf(k8sNodeTarballTemplate, buildID))
 	c.aksCustomWinBinariesURL = fmt.Sprintf("%s/%s", c.azureBlobContainerURL, fmt.Sprintf(winZipTemplate, buildID))
@@ -437,7 +425,7 @@ func getAKSDeploymentMethod(k8sRelease string) aksDeploymentMethod {
 	return customHyperkube
 }
 
-func (c *Cluster) populateAPIModelTemplate() error {
+func (c *aksEngineDeployer) populateAPIModelTemplate() error {
 	var err error
 	v := AKSEngineAPIModel{}
 	if c.apiModelPath != "" {
@@ -603,7 +591,7 @@ func (c *Cluster) populateAPIModelTemplate() error {
 	return nil
 }
 
-func (c *Cluster) getAKSEngine(retry int) error {
+func (c *aksEngineDeployer) getAKSEngine(retry int) error {
 	downloadPath := path.Join(os.Getenv("HOME"), "aks-engine.tar.gz")
 	f, err := os.Create(downloadPath)
 	if err != nil {
@@ -649,14 +637,14 @@ func (c *Cluster) getAKSEngine(retry int) error {
 
 }
 
-func (c *Cluster) generateARMTemplates() error {
+func (c *aksEngineDeployer) generateARMTemplates() error {
 	if err := control.FinishRunning(exec.Command(c.aksEngineBinaryPath, "generate", c.apiModelPath, "--output-directory", c.outputDir)); err != nil {
 		return fmt.Errorf("failed to generate ARM templates: %v.", err)
 	}
 	return nil
 }
 
-func (c *Cluster) loadARMTemplates() error {
+func (c *aksEngineDeployer) loadARMTemplates() error {
 	var err error
 	template, err := ioutil.ReadFile(path.Join(c.outputDir, "azuredeploy.json"))
 	if err != nil {
@@ -681,7 +669,7 @@ func (c *Cluster) loadARMTemplates() error {
 	return nil
 }
 
-func (c *Cluster) getAzureClient(ctx context.Context) error {
+func (c *aksEngineDeployer) getAzureClient(ctx context.Context) error {
 	// instantiate Azure Resource Manager Client
 	env, err := azure.EnvironmentFromName(c.azureEnvironment)
 	var client *AzureClient
@@ -706,7 +694,7 @@ func (c *Cluster) getAzureClient(ctx context.Context) error {
 	return nil
 }
 
-func (c *Cluster) createCluster() error {
+func (c *aksEngineDeployer) createCluster() error {
 	var err error
 	kubecfgDir, _ := ioutil.ReadDir(path.Join(c.outputDir, "kubeconfig"))
 	kubecfg := path.Join(c.outputDir, "kubeconfig", kubecfgDir[0].Name())
@@ -743,7 +731,7 @@ func (c *Cluster) createCluster() error {
 	return nil
 }
 
-func (c *Cluster) populateAzureCloudConfig(isVMSS bool) error {
+func (c *aksEngineDeployer) populateAzureCloudConfig(isVMSS bool) error {
 	// CLOUD_CONFIG is required when running Azure-specific e2e tests
 	// See https://github.com/kubernetes/kubernetes/blob/master/hack/ginkgo-e2e.sh#L113-L118
 	cc := map[string]string{
@@ -777,7 +765,7 @@ func (c *Cluster) populateAzureCloudConfig(isVMSS bool) error {
 	return nil
 }
 
-func (c *Cluster) dockerLogin() error {
+func (c *aksEngineDeployer) dockerLogin() error {
 	cwd, _ := os.Getwd()
 	log.Printf("CWD %v", cwd)
 	cmd := &exec.Cmd{}
@@ -828,7 +816,7 @@ func getDockerImage(imageName string) string {
 	return fmt.Sprintf("%s/%s:%s", imageRegistry, imageName, imageTag)
 }
 
-func (c *Cluster) buildAzureCloudComponents() error {
+func (c *aksEngineDeployer) buildAzureCloudComponents() error {
 	log.Println("Building cloud controller manager and cloud node manager.")
 
 	// Set environment variables for building cloud components' images
@@ -855,7 +843,7 @@ func (c *Cluster) buildAzureCloudComponents() error {
 	return nil
 }
 
-func (c *Cluster) buildHyperkube() error {
+func (c *aksEngineDeployer) buildHyperkube() error {
 	var pushCmd *exec.Cmd
 	os.Setenv("VERSION", imageTag)
 	log.Println("Building hyperkube.")
@@ -883,7 +871,7 @@ func (c *Cluster) buildHyperkube() error {
 	return nil
 }
 
-func (c *Cluster) uploadToAzureStorage(filePath string) (string, error) {
+func (c *aksEngineDeployer) uploadToAzureStorage(filePath string) (string, error) {
 	credential, err := azblob.NewSharedKeyCredential(c.credentials.StorageAccountName, c.credentials.StorageAccountKey)
 	if err != nil {
 		return "", fmt.Errorf("new shared key credential: %v", err)
@@ -905,29 +893,6 @@ func (c *Cluster) uploadToAzureStorage(filePath string) (string, error) {
 	blobURLString := blobURL.URL()
 	log.Printf("Uploaded %s to %s", filePath, blobURLString.String())
 	return blobURLString.String(), nil
-}
-
-func downloadFromURL(url string, destination string, retry int) (string, error) {
-	f, err := os.Create(destination)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	for i := 0; i < retry; i++ {
-		log.Printf("downloading %v from %v", destination, url)
-		if err := httpRead(url, f); err == nil {
-			break
-		}
-		err = fmt.Errorf("url=%s failed get %v: %v", url, destination, err)
-		if i == retry-1 {
-			return "", err
-		}
-		log.Println(err)
-		sleep(time.Duration(i) * time.Second)
-	}
-	f.Chmod(0644)
-	return destination, nil
 }
 
 func getZipBuildScript(buildScriptURL string, retry int) (string, error) {
@@ -954,7 +919,7 @@ func getZipBuildScript(buildScriptURL string, retry int) (string, error) {
 	return downloadPath, nil
 }
 
-func (c *Cluster) buildWinZip() error {
+func (c *aksEngineDeployer) buildWinZip() error {
 	zipName := fmt.Sprintf(winZipTemplate, buildID)
 	buildFolder := path.Join(os.Getenv("HOME"), "winbuild")
 	zipPath := path.Join(os.Getenv("HOME"), zipName)
@@ -976,7 +941,7 @@ func (c *Cluster) buildWinZip() error {
 	return nil
 }
 
-func (c *Cluster) Up() error {
+func (c *aksEngineDeployer) Up() error {
 	var err error
 	if c.apiModelPath != "" {
 		templateFile, err := downloadFromURL(c.apiModelPath, path.Join(c.outputDir, "kubernetes.json"), 2)
@@ -1013,7 +978,7 @@ func (c *Cluster) Up() error {
 	return nil
 }
 
-func (c *Cluster) Build(b buildStrategy) error {
+func (c *aksEngineDeployer) Build(b buildStrategy) error {
 	if c.aksDeploymentMethod != customK8sComponents {
 		// Build k8s without any special environment variables
 		if err := b.Build(); err != nil {
@@ -1078,12 +1043,12 @@ func (c *Cluster) Build(b buildStrategy) error {
 	return nil
 }
 
-func (c *Cluster) Down() error {
+func (c *aksEngineDeployer) Down() error {
 	log.Printf("Deleting resource group: %v.", c.resourceGroup)
 	return c.azureClient.DeleteResourceGroup(c.ctx, c.resourceGroup)
 }
 
-func (c *Cluster) DumpClusterLogs(localPath, gcsPath string) error {
+func (c *aksEngineDeployer) DumpClusterLogs(localPath, gcsPath string) error {
 	if !*aksDumpClusterLogs {
 		log.Print("Skipping DumpClusterLogs")
 		return nil
@@ -1143,11 +1108,11 @@ func (c *Cluster) DumpClusterLogs(localPath, gcsPath string) error {
 	return nil
 }
 
-func (c *Cluster) GetClusterCreated(clusterName string) (time.Time, error) {
+func (c *aksEngineDeployer) GetClusterCreated(clusterName string) (time.Time, error) {
 	return time.Time{}, errors.New("not implemented")
 }
 
-func (c *Cluster) TestSetup() error {
+func (c *aksEngineDeployer) TestSetup() error {
 	// set env vars required by the ccm e2e tests
 	if *testCcm {
 		if err := os.Setenv("K8S_AZURE_TENANTID", c.credentials.TenantID); err != nil {
@@ -1204,16 +1169,16 @@ func (c *Cluster) TestSetup() error {
 	return nil
 }
 
-func (c *Cluster) IsUp() error {
+func (c *aksEngineDeployer) IsUp() error {
 	return isUp(c)
 }
 
-func (c *Cluster) KubectlCommand() (*exec.Cmd, error) {
+func (c *aksEngineDeployer) KubectlCommand() (*exec.Cmd, error) {
 	return exec.Command("kubectl"), nil
 }
 
 // BuildTester returns a standard ginkgo-script tester or a custom one if testCcm is enabled
-func (c *Cluster) BuildTester(o *e2e.BuildTesterOptions) (e2e.Tester, error) {
+func (c *aksEngineDeployer) BuildTester(o *e2e.BuildTesterOptions) (e2e.Tester, error) {
 	if *testCcm {
 		return &GinkgoCCMTester{}, nil
 	}
