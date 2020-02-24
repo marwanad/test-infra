@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -38,13 +39,23 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var (
+	azureResourceGroupFlag         = "aksengine-resourcegroup-name"
+	azureKubemarkResourceNameFlag  = "kubemark-resource-name"
+	azureKubemarkResourceGroupFlag = "kubemark-resourcegroup-name"
+	kubemarkResourceName           = flag.String(azureKubemarkResourceNameFlag, "", "Kubemark Master Resource Name")
+	kubemarkResourceGroupName      = flag.String(azureKubemarkResourceGroupFlag, "", "Kubemark Master Resource Group Name")
+)
+
 type aksDeployer struct {
-	azureCreds    *Creds
-	azureClient   *AzureClient
-	templateUrl   string
-	outputDir     string
-	resourceGroup string
-	resourceName  string
+	azureCreds            *Creds
+	azureClient           *AzureClient
+	templateUrl           string
+	outputDir             string
+	resourceGroup         string
+	resourceName          string
+	kubemarkResourceGroup string
+	kubemarkResourceName  string
 }
 
 func newAksDeployer() (*aksDeployer, error) {
@@ -77,12 +88,14 @@ func newAksDeployer() (*aksDeployer, error) {
 	}
 
 	return &aksDeployer{
-		azureCreds:    creds,
-		azureClient:   client,
-		templateUrl:   *aksTemplateURL,
-		outputDir:     tempdir,
-		resourceGroup: *aksResourceGroupName,
-		resourceName:  *aksResourceName,
+		azureCreds:            creds,
+		azureClient:           client,
+		templateUrl:           *aksTemplateURL,
+		outputDir:             tempdir,
+		resourceGroup:         *aksResourceGroupName,
+		resourceName:          *aksResourceName,
+		kubemarkResourceGroup: *kubemarkResourceGroupName,
+		kubemarkResourceName:  *kubemarkResourceName,
 	}, nil
 }
 
@@ -98,6 +111,12 @@ func validateAksFlags() error {
 	}
 	if *aksDNSPrefix == "" {
 		*aksDNSPrefix = *aksResourceName
+	}
+	if *kubemarkResourceGroupName == "" {
+		*kubemarkResourceGroupName = fmt.Sprintf("%s-kubetest", *aksResourceGroupName)
+	}
+	if *kubemarkResourceName == "" {
+		*kubemarkResourceName = fmt.Sprintf("%s-kubetest", *aksResourceName)
 	}
 	return nil
 }
@@ -137,6 +156,26 @@ func (a *aksDeployer) Up() error {
 	if err := future.WaitForCompletionRef(context.Background(), a.azureClient.managedClustersClient.Client); err != nil {
 		return fmt.Errorf("failed long async cluster creation: %v", err)
 	}
+
+	credentialList, err := a.azureClient.managedClustersClient.ListClusterAdminCredentials(context.Background(), a.resourceGroup, a.resourceName)
+	if err != nil {
+		return fmt.Errorf("failed to list kubeconfigs: %v", err)
+	}
+	if credentialList.Kubeconfigs == nil || len(*credentialList.Kubeconfigs) < 1 {
+		return fmt.Errorf("no kubeconfigs available for the aks cluster")
+	}
+
+	kubeconfigPath := path.Join(a.outputDir, "kubeconfig")
+	if err := ioutil.WriteFile(kubeconfigPath, *(*credentialList.Kubeconfigs)[0].Value, 0644); err != nil {
+		return fmt.Errorf("failed to write kubeconfig out")
+	}
+
+	// NB(alexeldeib): order of execution is when running scalability tests is:
+	// kubemarkUp -> IsUp -> TestSetup -> Up -> TestSetup
+	// When executing other tests, the order is:
+	// Up -> TestSetup
+	// The kubeconfig must be available during kubemark tests, so we have to set it both in TestSetup and in Up.
+	os.Setenv("KUBECONFIG", kubeconfigPath)
 
 	return nil
 }
@@ -189,6 +228,12 @@ func (a *aksDeployer) TestSetup() error {
 	if err := ioutil.WriteFile(kubeconfigPath, *(*credentialList.Kubeconfigs)[0].Value, 0644); err != nil {
 		return fmt.Errorf("failed to write kubeconfig out")
 	}
+
+	// NB(alexeldeib): order of execution is when running scalability tests is:
+	// kubemarkUp -> IsUp -> TestSetup -> Up -> TestSetup
+	// When executing other tests, the order is:
+	// Up -> TestSetup
+	// The kubeconfig must be available during kubemark tests, so we have to set it both in TestSetup and in Up.
 
 	os.Setenv("KUBECONFIG", kubeconfigPath)
 

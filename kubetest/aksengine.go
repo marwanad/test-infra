@@ -52,7 +52,7 @@ const (
 
 var (
 	aksResourceName        = flag.String("aksengine-resource-name", "", "Azure Resource Name")
-	aksResourceGroupName   = flag.String("aksengine-resourcegroup-name", "", "Azure Resource Group Name")
+	aksResourceGroupName   = flag.String(azureResourceGroupFlag, "", "Azure Resource Group Name")
 	aksLocation            = flag.String("aksengine-location", "", "Azure AKS location")
 	aksMasterVMSize        = flag.String("aksengine-mastervmsize", "", "Azure Master VM size")
 	aksAgentVMSize         = flag.String("aksengine-agentvmsize", "", "Azure Agent VM size")
