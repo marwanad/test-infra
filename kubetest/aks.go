@@ -57,10 +57,15 @@ func newAksDeployer() (*aksDeployer, error) {
 		return nil, err
 	}
 
+	if err := prepareKubemarkEnv(); err != nil {
+		return nil, err
+	}
+
 	creds, err := getAzCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get azure credentials: %v", err)
 	}
+
 	env, err := azure.EnvironmentFromName(*aksAzureEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine azure environment: %v", err)
@@ -113,6 +118,21 @@ func validateAksFlags() error {
 	}
 	if *aksDNSPrefix == "" {
 		*aksDNSPrefix = *aksResourceName
+	}
+	return nil
+}
+
+func prepareKubemarkEnv() error {
+	if err := os.Setenv("KUBEMARK_RESOURCE_GROUP", *aksResourceGroupName); err != nil {
+		return err
+	}
+
+	if err := os.Setenv("CLOUD_PROVIDER", "aks"); err != nil {
+		return err
+	}
+
+	if err := os.Setenv("KUBEMARK_RESOURCE_NAME", *aksResourceName); err != nil {
+		return err
 	}
 	return nil
 }
