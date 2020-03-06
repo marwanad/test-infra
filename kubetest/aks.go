@@ -253,7 +253,26 @@ func (a *aksDeployer) TestSetup() error {
 		return err
 	}
 
-	os.Setenv("KUBECONFIG", kubeconfigPath)
+	if err := os.Setenv("KUBEMARK_RESOURCE_GROUP", *aksResourceGroupName); err != nil {
+		return err
+	}
+
+	if err := os.Setenv("KUBEMARK_RESOURCE_NAME", *aksResourceName); err != nil {
+		return err
+	}
+
+
+	if err := os.Setenv("CLOUD_PROVIDER", "aks"); err != nil {
+		return err
+	}
+
+	if err := os.Setenv("KUBECONFIG", kubeconfigPath); err != nil {
+		return err
+	}
+	
+	if err := installAzureCLI(); err != nil {
+		return err
+	}
 
 	log.Printf("Populating Azure cloud config")
 	isVMSS := (*managedCluster.ManagedClusterProperties.AgentPoolProfiles)[0].Type == "" || (*managedCluster.ManagedClusterProperties.AgentPoolProfiles)[0].Type == availabilityProfileVMSS
