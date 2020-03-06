@@ -758,3 +758,56 @@ periodics:
     description: Runs conformance tests using kubetest against latest kubernetes master with an IPv6 azure cluster
     testgrid-alert-email: kubernetes-provider-azure@googlegroups.com
     testgrid-num-columns-recent: '3'
+
+# conformance test against aks 
+- interval: 8h
+  # cloud-provider-azure-conformance runs Kubernetes conformance tests periodically.
+  name: periodic-aks-conformance
+  decorate: true
+  labels:
+    # preset-service-account: "true"
+    preset-azure-cred: "true"
+    preset-dind-enabled: "true"
+  extra_refs:
+  - org: kubernetes
+    repo: kubernetes
+    base_ref: master
+    path_alias: k8s.io/kubernetes
+  - org: kubernetes
+    repo: cloud-provider-azure
+    base_ref: master
+    path_alias: k8s.io/cloud-provider-azure
+  - org: kubernetes
+    repo: test-infra
+    base_ref: master
+    path_alias: k8s.io/test-infra
+  spec:
+    containers:
+    - image: gcr.io/k8s-testimages/kubekins-e2e:v20200306-eff5545-master
+      command:
+      - runner.sh
+      - kubetest
+      args:
+      - --test
+      - --up
+      - --down
+      - --build=
+      - --dump=$(ARTIFACTS)
+      - --deployment=aks
+      - --provider=azure
+      - --aksengine-creds=$(AZURE_CREDENTIALS)
+      - --aksengine-orchestratorRelease=1.17.0
+      - --aksengine-location=westus2
+      - --aksengine-template-url=https://gist.githubusercontent.com/alexeldeib/29986916a49b4720092f0a9c7af6418a/raw/a02c3d44946ead30b0f4ac43e581e36d6d8ff682/model.json
+      - --test_args=
+      - --ginkgo.focus=\[Conformance\]|\[NodeConformance\]
+      - --ginkgo.skip=\[Slow\]|\[Serial\]
+      - --ginkgo-parallel=30
+      - --timeout=420m"
+      securityContext:
+        privileged: true
+  annotations:
+    testgrid-dashboards: provider-azure-cloud-provider-azure, provider-azure-periodic
+    testgrid-tab-name: cloud-provider-azure-conformance
+    testgrid-alert-email: kubernetes-provider-azure@googlegroups.com
+    description: "Runs Kubernetes conformance tests with cloud-provider-azure (https://github.com/kubernetes-sigs/cloud-provider-azure)."

@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
+	mathrand "math/rand"
 	"os"
 	"os/exec"
 	"path"
@@ -35,13 +35,15 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2019-10-01/containerservice"
 	"github.com/Azure/go-autorest/autorest/azure"
-	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/ssh"
 )
+
+const charset = "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type aksDeployer struct {
 	azureCreds    *Creds
 	azureClient   *AzureClient
+	azureEnvironment string
 	templateUrl   string
 	outputDir     string
 	resourceGroup string
@@ -82,6 +84,7 @@ func newAksDeployer() (*aksDeployer, error) {
 	return &aksDeployer{
 		azureCreds:    creds,
 		azureClient:   client,
+		azureEnvironment: *aksAzureEnv,
 		templateUrl:   *aksTemplateURL,
 		outputDir:     tempdir,
 		resourceGroup: *aksResourceGroupName,
@@ -96,7 +99,8 @@ func validateAksFlags() error {
 		return fmt.Errorf("no credentials file path specified")
 	}
 	if *aksResourceName == "" {
-		*aksResourceName = "kubetest-" + uuid.NewV1().String()
+		// Must be short or managed node resource group name will exceed 80 char
+		*aksResourceName = "kubetest-" + randString(8)
 	}
 	if *aksResourceGroupName == "" {
 		*aksResourceGroupName = *aksResourceName
@@ -124,6 +128,12 @@ func (a *aksDeployer) Up() error {
 		return fmt.Errorf("failed to unmarshal managedcluster model: %v", err)
 	}
 
+	log.Printf("Populating Azure cloud config")
+	isVMSS := (*model.ManagedClusterProperties.AgentPoolProfiles)[0].Type == "" || (*model.ManagedClusterProperties.AgentPoolProfiles)[0].Type == availabilityProfileVMSS
+	if err := populateAzureCloudConfig(isVMSS, *a.azureCreds, a.azureEnvironment, a.resourceGroup, a.location, a.outputDir); err != nil {
+		return err
+	}
+
 	_, sshPublicKey, err := newSSHKeypair(4096)
 	if err != nil {
 		return fmt.Errorf("failed to generate ssh key for cluster creation: %v", err)
@@ -135,6 +145,12 @@ func (a *aksDeployer) Up() error {
 	model.ManagedClusterProperties.ServicePrincipalProfile.Secret = &a.azureCreds.ClientSecret
 	model.Location = &a.location
 	model.ManagedClusterProperties.KubernetesVersion = &a.k8sVersion
+
+	log.Printf("Creating Azure resource group: %v for cluster deployment.", a.resourceGroup)
+	_, err = a.azureClient.EnsureResourceGroup(context.Background(), a.resourceGroup, a.location, nil)
+	if err != nil {
+		return fmt.Errorf("could not ensure resource group: %v", err)
+	}
 
 	future, err := a.azureClient.managedClustersClient.CreateOrUpdate(context.Background(), a.resourceGroup, a.resourceName, model)
 	if err != nil {
@@ -218,11 +234,11 @@ func (a *aksDeployer) TestSetup() error {
 		return fmt.Errorf("failed to write kubeconfig out")
 	}
 
-	masterIP, err := control.Output(exec.Command(
-		"az", "aks", "show",
-		"-g", *aksResourceGroupName,
-		"-n", *aksResourceName,
-		"--query", "fqdn", "-o", "tsv"))
+	managedCluster, err := a.azureClient.managedClustersClient.Get(context.Background(), a.resourceGroup, a.resourceName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch aks managed cluster: %v", err)
+	}
+	masterIP := *managedCluster.ManagedClusterProperties.Fqdn
 	if err != nil {
 		return fmt.Errorf("failed to get masterIP: %v", err)
 	}
@@ -249,16 +265,8 @@ func (a *aksDeployer) TestSetup() error {
 }
 
 func (a *aksDeployer) Down() error {
-	log.Printf("Deleting AKS cluster %v in resource group %v", a.resourceName, a.resourceGroup)
-	future, err := a.azureClient.managedClustersClient.Delete(context.Background(), a.resourceGroup, a.resourceName)
-	if err != nil {
-		res := future.Response()
-		if res != nil && res.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		return fmt.Errorf("failed to start cluster deletion: %v", err)
-	}
-	return future.WaitForCompletionRef(context.Background(), a.azureClient.managedClustersClient.Client)
+	log.Printf("Deleting resource group: %v.", a.resourceGroup)
+	return a.azureClient.DeleteResourceGroup(context.Background(), a.resourceGroup)
 }
 
 func (a *aksDeployer) GetClusterCreated(_ string) (time.Time, error) { return time.Now(), nil }
@@ -301,3 +309,35 @@ func newSSHKeypair(bits int) (private, public []byte, err error) {
 
 	return privBytes, pubBytes, nil
 }
+
+func installAzureCLI() error {
+	if err := control.FinishRunning(exec.Command("curl", "-sL", "https://packages.microsoft.com/keys/microsoft.asc", "-o", "msft.asc.gpg")); err != nil {
+		return err
+	}
+
+	if err := control.FinishRunning(exec.Command("gpg", "-o", "/etc/apt/trusted.gpg.d/microsoft.asc.gpg", "--dearmor", "msft.asc.gpg")); err != nil {
+		return err
+	}
+
+	if err := control.FinishRunning(exec.Command("bash", "-c", "echo \"deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli $(lsb_release -cs) main\" | tee /etc/apt/sources.list.d/azure-cli.list")); err != nil {
+		return err
+	}
+
+	if err := control.FinishRunning(exec.Command("apt-get", "update")); err != nil {
+		return err
+	}
+
+	if err := control.FinishRunning(exec.Command("apt-get", "install", "-y", "azure-cli")); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func randString(length int) string {
+	b := make([]byte, length)
+	for i := range b {
+	  b[i] = charset[mathrand.Intn(len(charset))]
+	}
+	return string(b)
+  }

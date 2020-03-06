@@ -877,6 +877,10 @@ func activateServiceAccount(path string) error {
 }
 
 func prepareAKS(o *options) error {
+	if err := installAzureCLI(); err != nil {
+		return err
+	}
+
 	if err := os.Setenv("KUBEMARK_RESOURCE_GROUP", *aksResourceGroupName); err != nil {
 		return err
 	}
