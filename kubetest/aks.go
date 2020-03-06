@@ -41,15 +41,15 @@ import (
 const charset = "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type aksDeployer struct {
-	azureCreds    *Creds
-	azureClient   *AzureClient
+	azureCreds       *Creds
+	azureClient      *AzureClient
 	azureEnvironment string
-	templateUrl   string
-	outputDir     string
-	resourceGroup string
-	resourceName  string
-	location      string
-	k8sVersion    string
+	templateUrl      string
+	outputDir        string
+	resourceGroup    string
+	resourceName     string
+	location         string
+	k8sVersion       string
 }
 
 func newAksDeployer() (*aksDeployer, error) {
@@ -81,17 +81,23 @@ func newAksDeployer() (*aksDeployer, error) {
 		return nil, fmt.Errorf("error creating tempdir: %v", err)
 	}
 
-	return &aksDeployer{
-		azureCreds:    creds,
-		azureClient:   client,
+	a := &aksDeployer{
+		azureCreds:       creds,
+		azureClient:      client,
 		azureEnvironment: *aksAzureEnv,
-		templateUrl:   *aksTemplateURL,
-		outputDir:     outputDir,
-		resourceGroup: *aksResourceGroupName,
-		resourceName:  *aksResourceName,
-		location:      *aksLocation,
-		k8sVersion:    *aksOrchestratorRelease,
-	}, nil
+		templateUrl:      *aksTemplateURL,
+		outputDir:        outputDir,
+		resourceGroup:    *aksResourceGroupName,
+		resourceName:     *aksResourceName,
+		location:         *aksLocation,
+		k8sVersion:       *aksOrchestratorRelease,
+	}
+
+	if err := a.dockerLogin(); err != nil {
+		return nil, err
+	}
+
+	return a, nil
 }
 
 func validateAksFlags() error {
@@ -261,7 +267,6 @@ func (a *aksDeployer) TestSetup() error {
 		return err
 	}
 
-
 	if err := os.Setenv("CLOUD_PROVIDER", "aks"); err != nil {
 		return err
 	}
@@ -269,7 +274,7 @@ func (a *aksDeployer) TestSetup() error {
 	if err := os.Setenv("KUBECONFIG", kubeconfigPath); err != nil {
 		return err
 	}
-	
+
 	if err := installAzureCLI(); err != nil {
 		return err
 	}
@@ -353,10 +358,42 @@ func installAzureCLI() error {
 	return nil
 }
 
+func (a *aksDeployer) dockerLogin() error {
+	cmd := &exec.Cmd{}
+	username := ""
+	pwd := ""
+	server := ""
+	var err error
+
+	if !strings.Contains(imageRegistry, "azurecr.io") {
+		// if REGISTRY is not ACR, then use docker cred
+		log.Println("Attempting Docker login with docker cred.")
+		username = os.Getenv("DOCKER_USERNAME")
+		passwordFile := os.Getenv("DOCKER_PASSWORD_FILE")
+		password, err := ioutil.ReadFile(passwordFile)
+		if err != nil {
+			return fmt.Errorf("error reading docker password file %v: %v", passwordFile, err)
+		}
+		pwd = strings.TrimSuffix(string(password), "\n")
+	} else {
+		// if REGISTRY is ACR, then use azure credential
+		log.Println("Attempting Docker login with azure cred.")
+		username = a.azureCreds.ClientID
+		pwd = a.azureCreds.ClientSecret
+		server = imageRegistry
+	}
+	cmd = exec.Command("docker", "login", fmt.Sprintf("--username=%s", username), fmt.Sprintf("--password=%s", pwd), server)
+	if err = cmd.Run(); err != nil {
+		return fmt.Errorf("failed Docker login with error: %v", err)
+	}
+	log.Println("Docker login success.")
+	return nil
+}
+
 func randString(length int) string {
 	b := make([]byte, length)
 	for i := range b {
-	  b[i] = charset[mathrand.Intn(len(charset))]
+		b[i] = charset[mathrand.Intn(len(charset))]
 	}
 	return string(b)
-  }
+}
