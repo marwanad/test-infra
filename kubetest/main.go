@@ -258,9 +258,9 @@ func getDeployer(o *options) (deployer, error) {
 	case "local":
 		return newLocalCluster(), nil
 	case "aksengine":
-		return newAKSEngine(o)
+		return newAKSEngine()
 	case "aks":
-		return newAksDeployer(o)
+		return newAksDeployer()
 	default:
 		return nil, fmt.Errorf("unknown deployment strategy %q", o.deployment)
 	}
@@ -337,21 +337,12 @@ func complete(o *options) error {
 		defer writeMetadata(o.dump, o.metadataSources)
 		defer control.WriteXML(&suite, o.dump, time.Now())
 	}
-	
 	if o.logexporterGCSPath != "" {
 		o.testArgs += fmt.Sprintf(" --logexporter-gcs-path=%s", o.logexporterGCSPath)
 	}
-
-	var err error
-	o.outputDir, err = ioutil.TempDir(os.Getenv("HOME"), "tmp")
-	if err != nil {
-		return fmt.Errorf("error creating tempdir: %v", err)
-	}
-
 	if err := prepare(o); err != nil {
 		return fmt.Errorf("failed to prepare test environment: %v", err)
 	}
-
 	// Get the deployer before we acquire k8s so any additional flag
 	// verifications happen early.
 	deploy, err := getDeployer(o)
@@ -896,16 +887,6 @@ func prepareAKS(o *options) error {
 	}
 
 	if err := os.Setenv("KUBEMARK_RESOURCE_NAME", *aksResourceName); err != nil {
-		return err
-	}
- 
-	creds, err := getAzCredentials()
-	if err != nil {
-		return fmt.Errorf("failed to get azure credentials: %v", err)
-	}
-
-	// we hardcode isVMSS to true here, because this is only used for kubemark
-	if err := populateAzureCloudConfig(true, *creds, *aksAzureEnv, *aksResourceGroupName, *aksResourceName, o.outputDir); err != nil {
 		return err
 	}
 

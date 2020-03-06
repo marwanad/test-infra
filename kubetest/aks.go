@@ -52,7 +52,7 @@ type aksDeployer struct {
 	k8sVersion    string
 }
 
-func newAksDeployer(o *options) (*aksDeployer, error) {
+func newAksDeployer() (*aksDeployer, error) {
 	if err := validateAksFlags(); err != nil {
 		return nil, err
 	}
@@ -76,12 +76,17 @@ func newAksDeployer(o *options) (*aksDeployer, error) {
 		return nil, fmt.Errorf("error trying to get Azure Client: %v", err)
 	}
 
+	outputDir, err := ioutil.TempDir(os.Getenv("HOME"), "tmp")
+	if err != nil {
+		return nil, fmt.Errorf("error creating tempdir: %v", err)
+	}
+
 	return &aksDeployer{
 		azureCreds:    creds,
 		azureClient:   client,
 		azureEnvironment: *aksAzureEnv,
 		templateUrl:   *aksTemplateURL,
-		outputDir:     o.outputDir,
+		outputDir:     outputDir,
 		resourceGroup: *aksResourceGroupName,
 		resourceName:  *aksResourceName,
 		location:      *aksLocation,
@@ -121,12 +126,6 @@ func (a *aksDeployer) Up() error {
 	var model containerservice.ManagedCluster
 	if err := json.Unmarshal(template, &model); err != nil {
 		return fmt.Errorf("failed to unmarshal managedcluster model: %v", err)
-	}
-
-	log.Printf("Populating Azure cloud config")
-	isVMSS := (*model.ManagedClusterProperties.AgentPoolProfiles)[0].Type == "" || (*model.ManagedClusterProperties.AgentPoolProfiles)[0].Type == availabilityProfileVMSS
-	if err := populateAzureCloudConfig(isVMSS, *a.azureCreds, a.azureEnvironment, a.resourceGroup, a.location, a.outputDir); err != nil {
-		return err
 	}
 
 	_, sshPublicKey, err := newSSHKeypair(4096)
@@ -255,6 +254,12 @@ func (a *aksDeployer) TestSetup() error {
 	}
 
 	os.Setenv("KUBECONFIG", kubeconfigPath)
+
+	log.Printf("Populating Azure cloud config")
+	isVMSS := (*managedCluster.ManagedClusterProperties.AgentPoolProfiles)[0].Type == "" || (*managedCluster.ManagedClusterProperties.AgentPoolProfiles)[0].Type == availabilityProfileVMSS
+	if err := populateAzureCloudConfig(isVMSS, *a.azureCreds, a.azureEnvironment, a.resourceGroup, a.location, a.outputDir); err != nil {
+		return err
+	}
 
 	return nil
 }

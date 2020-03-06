@@ -325,7 +325,7 @@ func checkParams() error {
 	return nil
 }
 
-func newAKSEngine(o *options) (*aksEngineDeployer, error) {
+func newAKSEngine() (*aksEngineDeployer, error) {
 	if err := checkParams(); err != nil {
 		return nil, fmt.Errorf("error creating Azure K8S cluster: %v", err)
 	}
@@ -339,6 +339,11 @@ func newAKSEngine(o *options) (*aksEngineDeployer, error) {
 		}
 	}
 
+	outputDir, err := ioutil.TempDir(os.Getenv("HOME"), "tmp")
+	if err != nil {
+		return nil, fmt.Errorf("error creating tempdir: %v", err)
+	}
+
 	c := aksEngineDeployer{
 		ctx:                              context.Background(),
 		apiModelPath:                     *aksTemplateURL,
@@ -346,7 +351,7 @@ func newAKSEngine(o *options) (*aksEngineDeployer, error) {
 		dnsPrefix:                        *aksDNSPrefix,
 		location:                         *aksLocation,
 		resourceGroup:                    *aksResourceGroupName,
-		outputDir:                        o.outputDir,
+		outputDir:                        outputDir,
 		sshPublicKey:                     fmt.Sprintf("%s", sshKey),
 		sshPrivateKeyPath:                *aksSSHPrivateKeyPath,
 		credentials:                      &Creds{},
