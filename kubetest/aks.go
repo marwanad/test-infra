@@ -52,7 +52,7 @@ type aksDeployer struct {
 	k8sVersion    string
 }
 
-func newAksDeployer() (*aksDeployer, error) {
+func newAksDeployer(o *options) (*aksDeployer, error) {
 	if err := validateAksFlags(); err != nil {
 		return nil, err
 	}
@@ -76,17 +76,12 @@ func newAksDeployer() (*aksDeployer, error) {
 		return nil, fmt.Errorf("error trying to get Azure Client: %v", err)
 	}
 
-	tempdir, err := ioutil.TempDir(os.Getenv("HOME"), "aks")
-	if err != nil {
-		return nil, fmt.Errorf("error creating tempdir: %v", err)
-	}
-
 	return &aksDeployer{
 		azureCreds:    creds,
 		azureClient:   client,
 		azureEnvironment: *aksAzureEnv,
 		templateUrl:   *aksTemplateURL,
-		outputDir:     tempdir,
+		outputDir:     o.outputDir,
 		resourceGroup: *aksResourceGroupName,
 		resourceName:  *aksResourceName,
 		location:      *aksLocation,

@@ -777,10 +777,56 @@ periodics:
     repo: cloud-provider-azure
     base_ref: master
     path_alias: k8s.io/cloud-provider-azure
+  - org: alexeldeib
+    repo: test-infra
+    base_ref: ace/conform
+    path_alias: k8s.io/test-infra
+  spec:
+    containers:
+    - image: gcr.io/k8s-testimages/kubekins-e2e:v20200306-eff5545-master
+      command:
+      - runner.sh
+      - bash
+      - -c 
+      args:
+      # - apt update && apt install -y tree && sleep infinity
+      # Generic e2e test args
+      - make WHAT=cmd/kubectl && make ginkgo && make WHAT=test/e2e/e2e.test && export PATH=$PATH:$(go env GOPATH)/src/k8s.io/kubernetes/_output/bin && pushd $(go env GOPATH)/src/k8s.io/test-infra/kubetest && go build -o $(go env GOPATH)/src/k8s.io/kubernetes/kubetest . && popd && ./kubetest --test --up --down --build= --dump=$(ARTIFACTS) --deployment=aks --provider=azure --aksengine-creds=$(AZURE_CREDENTIALS) --aksengine-orchestratorRelease=1.17.0 --aksengine-location=southcentralus --aksengine-template-url=https://gist.githubusercontent.com/alexeldeib/29986916a49b4720092f0a9c7af6418a/raw/a02c3d44946ead30b0f4ac43e581e36d6d8ff682/model.json --test_args="--ginkgo.focus=\[Conformance\]|\[NodeConformance\] --ginkgo.skip=\[Slow\]|\[Serial\]" --ginkgo-parallel=30 --timeout=420m
+      securityContext:
+        privileged: true
+  annotations:
+    testgrid-dashboards: provider-azure-cloud-provider-azure, provider-azure-periodic
+    testgrid-tab-name: cloud-provider-azure-conformance
+    testgrid-alert-email: kubernetes-provider-azure@googlegroups.com
+    description: "Runs Kubernetes conformance tests with cloud-provider-azure (https://github.com/kubernetes-sigs/cloud-provider-azure)."
+
+
+# scalability test against aks 
+- interval: 24h
+  # cloud-provider-azure-scalability runs Kubernetes scalability tests periodically.
+  name: periodic-aks-scalability
+  decorate: true
+  labels:
+    # preset-service-account: "true"
+    preset-azure-cred: "true"
+    preset-dind-enabled: "true"
+  extra_refs:
+  - org: kubernetes
+    repo: kubernetes
+    base_ref: master
+    path_alias: k8s.io/kubernetes
+  - org: kubernetes
+    repo: cloud-provider-azure
+    base_ref: master
+    path_alias: k8s.io/cloud-provider-azure
   - org: kubernetes
     repo: test-infra
     base_ref: master
     path_alias: k8s.io/test-infra
+  - org: kubernetes
+    repo: perf-tests
+    base_ref: master
+    path_alias: k8s.io/perf-tests
   spec:
     containers:
     - image: gcr.io/k8s-testimages/kubekins-e2e:v20200306-eff5545-master
@@ -788,7 +834,7 @@ periodics:
       - runner.sh
       - kubetest
       args:
-      - --test
+      - --test=false
       - --up
       - --down
       - --build=
@@ -799,11 +845,30 @@ periodics:
       - --aksengine-orchestratorRelease=1.17.0
       - --aksengine-location=westus2
       - --aksengine-template-url=https://gist.githubusercontent.com/alexeldeib/29986916a49b4720092f0a9c7af6418a/raw/a02c3d44946ead30b0f4ac43e581e36d6d8ff682/model.json
-      - --test_args=
-      - --ginkgo.focus=\[Conformance\]|\[NodeConformance\]
-      - --ginkgo.skip=\[Slow\]|\[Serial\]
-      - --ginkgo-parallel=30
-      - --timeout=420m"
+      - --kubemark
+      - --kubemark-nodes=500
+      - --test_args=--ginkgo.focus=xxxx
+      - --test-cmd=$GOPATH/src/k8s.io/perf-tests/run-e2e.sh
+      - --test-cmd-args=cluster-loader2
+      - --test-cmd-args=--nodes=500
+      - --test-cmd-args=--provider=kubemark
+      - --test-cmd-args=--report-dir=/workspace/_artifacts
+      - --test-cmd-args=--testconfig=testing/density/config.yaml
+      - --test-cmd-args=--testconfig=testing/load/config.yaml
+      - --test-cmd-args=--testconfig=testing/access-tokens/config.yaml
+      - --test-cmd-args=--testoverrides=./testing/experiments/enable_prometheus_api_responsiveness.yaml
+      - --test-cmd-args=--testoverrides=./testing/experiments/use_simple_latency_query.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/experimental/overrides/enable_configmaps.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/experimental/overrides/enable_daemonsets.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/experimental/overrides/enable_jobs.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/experimental/overrides/enable_secrets.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/experimental/overrides/enable_statefulsets.yaml
+      - --test-cmd-args=--testoverrides=./testing/load/kubemark/500_nodes/override.yaml
+      - --test-cmd-name=ClusterLoaderV2
+      - --timeout=420m
+      env:
+      - name: USE_EXISTING
+        value: 'true'
       securityContext:
         privileged: true
   annotations:
